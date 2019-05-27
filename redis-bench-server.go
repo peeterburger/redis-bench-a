@@ -10,7 +10,7 @@ import (
 	"github.com/urfave/cli"
 )
 
-const DEFAULT_BUF_SIZE int = 1024
+const defaultBufferSize int = 1024
 
 func main() {
 
@@ -58,7 +58,7 @@ type request struct {
 	seat uint32
 }
 
-func ParseRequest(buf []byte) (r *request) {
+func parseRequest(buf []byte) (r *request) {
 
 	seat := binary.LittleEndian.Uint32(buf[:4])
 	fmt.Printf("Seat: %d\n", seat)
@@ -71,19 +71,22 @@ func ParseRequest(buf []byte) (r *request) {
 func handleClient(conn net.Conn, redis *redis.Client, c *cli.Context) {
 
 	// make buffer
-	buf := make([]byte, DEFAULT_BUF_SIZE)
+	buf := make([]byte, defaultBufferSize)
 
 	for {
 
 		// read an incomming message
 		reqLen, err := conn.Read(buf)
-		checkError(err)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Closing connection from %s", conn.LocalAddr().String())
+			break
+		}
 
 		// printing out received message
 		fmt.Printf("Receive -> len: %d, message: %s\n", reqLen, buf[:reqLen])
 
 		// parsing request
-		request := ParseRequest(buf)
+		request := parseRequest(buf)
 		fmt.Println(request.seat)
 
 		// calling the redis database
@@ -91,6 +94,8 @@ func handleClient(conn net.Conn, redis *redis.Client, c *cli.Context) {
 
 		fmt.Println(redis.Get("test"))
 	}
+
+	conn.Close()
 }
 
 func run(c *cli.Context) {
@@ -104,25 +109,38 @@ func run(c *cli.Context) {
 	fmt.Fprintf(c.App.Writer, "[redis] -> %s\n", c.String("redis"))
 
 	// setting up redis client
+	fmt.Fprintf(c.App.Writer, "Creating redis client (%s)\n", redisHost)
 	client := redis.NewClient(&redis.Options{
 		Addr:     redisHost,
 		Password: "",
 		DB:       0,
 	})
 
+	// testing connection to redis host
+	fmt.Fprintf(c.App.Writer, "Testing connection to redis host (%s)\n", redisHost)
+	pong, err := client.Ping().Result()
+	checkError(err)
+	if pong != "PONG" {
+		panic("Ping request did not answer 'PONG'")
+	}
+
 	// building tcp address to listen to
+	fmt.Fprintf(c.App.Writer, "Setting up local iterface (%s)\n", localListeningInterface)
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", localListeningInterface)
 	checkError(err)
 
 	// set to listening mode 'tcp'
+	fmt.Fprintf(c.App.Writer, "Setting listening mode 'tcp' (%s)\n", localListeningInterface)
 	listener, err := net.ListenTCP("tcp", tcpAddr)
 	checkError(err)
+
+	fmt.Fprintf(c.App.Writer, "Waiting for incomming connections (%s)\n", localListeningInterface)
 
 	for {
 
 		// appepts an incomming client
 		conn, err := listener.Accept()
-		fmt.Printf("Connection appepted: %s\n", conn.LocalAddr().String())
+		fmt.Printf("Connection accepted from %s\n", conn.LocalAddr().String())
 		checkError(err)
 
 		// handle client connection
